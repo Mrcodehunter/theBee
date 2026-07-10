@@ -1,0 +1,9 @@
+langgraph>=1.2.8
+langchain-core>=1.4.9
+langchain-ollama>=1.1.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+requests>=2.32
+beautifulsoup4>=4.15
+ddgs>=9.14
