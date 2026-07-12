@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "git": {
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "{project_dir}"],
+      "trusted": false
+    }
+  }
+}

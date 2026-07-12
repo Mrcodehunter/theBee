@@ -130,7 +130,7 @@ def _serialize_messages(messages: list) -> list[dict]:
             out.append({
                 "role": "tool",
                 "name": getattr(msg, "name", ""),
-                "content": str(msg.content)[:2000],
+                "content": msg.text[:2000],
             })
     return out
 
@@ -230,7 +230,7 @@ def _stream_run(session_id: str, run_input, model_id: str) -> "StreamingResponse
                             for msg in update["messages"]:
                                 yield _sse("tool_result", {
                                     "name": getattr(msg, "name", ""),
-                                    "content": str(msg.content)[:2000],
+                                    "content": msg.text[:2000],
                                 })
             if not hit_interrupt:
                 # First message becomes the session title, ChatGPT-style.

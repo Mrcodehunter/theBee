@@ -237,6 +237,46 @@ with an `available` flag showing whether its API key is set.
 | `browse_page` | Fetch and read one URL's full text | No |
 | `compare_pages` | Fetch 2–5 URLs and compare their content side by side | No |
 
+Plus whatever's configured in `agent/mcp_servers.json` (see below) — every
+MCP tool requires approval too, unless its server is marked `"trusted"`.
+
+## MCP servers
+
+Beyond the hand-written tools above, the agent can call tools from any
+[MCP](https://modelcontextprotocol.io/) server you configure. Copy
+`agent/mcp_servers.example.json` to `agent/mcp_servers.json` (gitignored)
+and list servers under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "git": {
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "{project_dir}"],
+      "trusted": false
+    }
+  }
+}
+```
+
+- `{project_dir}` in `args` is substituted with the agent's sandboxed
+  project directory at startup — the same directory `read_file`/
+  `write_file`/`run_command` are confined to.
+- `trusted` (default `false`) is our own field, not part of MCP — every
+  tool from a non-trusted server pauses for approval, same `interrupt()`
+  mechanism and same `ApprovalCard`/`Allow? [y/N]` prompt as `write_file`
+  and dangerous `run_command`s. Set it to `true` per server once you trust
+  it, to skip the pause.
+- No config file → zero MCP tools, agent behaves exactly as it did before
+  MCP support existed. Fully optional.
+- Each MCP tool call opens a fresh session (a fresh subprocess, for
+  `stdio` servers like the git one above) — this is `langchain-mcp-adapters`'
+  documented default behavior, not a shortcut. It costs a bit of latency per
+  call in exchange for a much simpler implementation (the rest of the app —
+  `agent_graph.py`, `server.py`, `dev_agent.py` — stays fully synchronous,
+  with no changes needed to support this).
+
 ## Future goals
 
 theBee is as much a **learning project** as it is a tool — the point is to
@@ -260,15 +300,17 @@ directions:
   and how much of "agentic" behavior is really just prompting discipline
   vs. model capability. The side-by-side picker makes this comparison easy
   to run directly.
-- **Add MCP (Model Context Protocol) integration.** Right now every tool
-  is a hand-written Python function in `tools/`. The next step is wiring
-  in an [MCP](https://modelcontextprotocol.io/) client so the agent can
-  discover and call tools exposed by external MCP servers (filesystem,
-  git, databases, browser automation, etc.) instead of only using
-  built-ins — and understand, concretely, how MCP's
-  discovery/schema/invocation handshake compares to LangChain's `@tool`
-  approach it uses today. Longer term: expose theBee's own tools *as* an
-  MCP server, so other agents/hosts (e.g. Claude Code) could call into it.
+- **MCP (Model Context Protocol) integration — done, and growing.** The
+  agent now discovers and calls tools from any configured MCP server (see
+  MCP servers above), starting with the git server, via
+  `langchain-mcp-adapters` — a good concrete look at how MCP's
+  discovery/schema/invocation handshake compares to the hand-written
+  `@tool` approach used everywhere else in `tools/`. Currently every MCP
+  call opens a fresh session per invocation (simple, but adds latency);
+  a natural next step is a persistent-session mode for servers under
+  heavy use, which would require converting the sync execution model to
+  async end-to-end. Longer term: expose theBee's own tools *as* an MCP
+  server, so other agents/hosts (e.g. Claude Code) could call into it.
 - **Multi-agent orchestration.** Experiment with splitting today's single
   agent into cooperating sub-agents (e.g. a planner, a coder, a reviewer)
   and compare that against the current single-graph approach — same

@@ -2,6 +2,8 @@
 .env
 *.env
 !*.env.example
+mcp_servers.json
+!mcp_servers.example.json
 
 # Python
 __pycache__/
