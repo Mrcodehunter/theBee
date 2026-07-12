@@ -4,6 +4,13 @@ export interface Session {
   created_at: string;
 }
 
+export interface ModelInfo {
+  id: string;
+  label: string;
+  provider: string;
+  available: boolean;
+}
+
 export type ChatRole = "user" | "assistant" | "tool";
 
 export interface ToolCall {

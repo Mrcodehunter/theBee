@@ -1,0 +1,15 @@
+# Secrets
+.env
+*.env
+!*.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# UI (kept in sync with ui/.gitignore, applies repo-wide too)
+node_modules/
+dist/
+dist-ssr/

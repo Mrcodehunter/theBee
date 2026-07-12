@@ -1,4 +1,4 @@
-import type { ApprovalRequest, ChatMessage, SSEEvent, Session } from "./types";
+import type { ApprovalRequest, ChatMessage, ModelInfo, SSEEvent, Session } from "./types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -23,6 +23,10 @@ export function listSessions(): Promise<Session[]> {
 
 export function deleteSession(id: string): Promise<void> {
   return fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" }).then(() => undefined);
+}
+
+export function listModels(): Promise<ModelInfo[]> {
+  return fetch(`${API_BASE}/api/models`).then(json<ModelInfo[]>);
 }
 
 export function getMessages(
@@ -68,23 +72,25 @@ async function consumeSSE(res: Response, onEvent: (e: SSEEvent) => void): Promis
 export function streamMessage(
   sessionId: string,
   content: string,
+  model: string,
   onEvent: (e: SSEEvent) => void
 ): Promise<void> {
   return fetch(`${API_BASE}/api/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, model }),
   }).then((res) => consumeSSE(res, onEvent));
 }
 
 export function streamApprove(
   sessionId: string,
   approved: boolean,
+  model: string,
   onEvent: (e: SSEEvent) => void
 ): Promise<void> {
   return fetch(`${API_BASE}/api/sessions/${sessionId}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify({ approved, model }),
   }).then((res) => consumeSSE(res, onEvent));
 }

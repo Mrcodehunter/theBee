@@ -17,7 +17,8 @@ history and human-in-the-loop approvals are handled entirely by LangGraph.
 
 Run:
     uvicorn server:app --reload --port 8000
-    (optionally set AGENT_PROJECT_DIR to point the agent at a project)
+    (optionally set AGENT_PROJECT_DIR to point the agent at a project, and
+    ANTHROPIC_API_KEY to enable Claude — both can also go in agent/.env)
 """
 
 import json
@@ -27,13 +28,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langgraph.types import Command
 
+load_dotenv()  # load agent/.env, if present, before reading any env vars below
+
 from agent_graph import build_graph, MODEL_NAME
+from models import DEFAULT_MODEL_ID, is_available, list_models
 
 MAX_ITERATIONS = 15
 
@@ -73,17 +78,30 @@ class CreateSessionBody(BaseModel):
 
 class MessageBody(BaseModel):
     content: str
+    model: Optional[str] = None
 
 
 class ApproveBody(BaseModel):
     approved: bool
+    model: Optional[str] = None
 
 
-def _config(session_id: str) -> dict:
+def _config(session_id: str, model_id: str = DEFAULT_MODEL_ID) -> dict:
     return {
-        "configurable": {"thread_id": session_id},
+        "configurable": {"thread_id": session_id, "model_id": model_id},
         "recursion_limit": MAX_ITERATIONS * 2,
     }
+
+
+def _resolve_model(model_id: Optional[str]) -> str:
+    """Validate the requested model id, defaulting to the local model.
+    Raises a 400 (rather than letting a missing API key blow up mid-stream)
+    if the caller asked for a model that isn't configured."""
+    if model_id is None:
+        return DEFAULT_MODEL_ID
+    if not is_available(model_id):
+        raise HTTPException(status_code=400, detail=f"Model '{model_id}' is not available on this server")
+    return model_id
 
 
 def _require_session(session_id: str) -> dict:
@@ -98,9 +116,12 @@ def _serialize_messages(messages: list) -> list[dict]:
     for msg in messages:
         msg_type = getattr(msg, "type", "")
         if msg_type == "human":
-            out.append({"role": "user", "content": msg.content})
+            out.append({"role": "user", "content": msg.text})
         elif msg_type == "ai":
-            entry = {"role": "assistant", "content": msg.content or ""}
+            # msg.content can be a plain string or a list of content blocks
+            # (e.g. {"type": "text", "text": "...", "index": 0}) depending on
+            # the model backend — .text normalizes either shape to a string.
+            entry = {"role": "assistant", "content": msg.text or ""}
             tool_calls = getattr(msg, "tool_calls", None)
             if tool_calls:
                 entry["tool_calls"] = [{"name": c["name"], "args": c["args"]} for c in tool_calls]
@@ -129,6 +150,11 @@ def _pending_interrupt(session_id: str):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "project_dir": str(PROJECT_DIR), "model": MODEL_NAME}
+
+
+@app.get("/api/models")
+def get_models():
+    return list_models()
 
 
 @app.post("/api/sessions")
@@ -174,8 +200,8 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def _stream_run(session_id: str, run_input) -> "StreamingResponse":
-    config = _config(session_id)
+def _stream_run(session_id: str, run_input, model_id: str) -> "StreamingResponse":
+    config = _config(session_id, model_id)
 
     def gen():
         try:
@@ -183,8 +209,12 @@ def _stream_run(session_id: str, run_input) -> "StreamingResponse":
             for mode, chunk in agent.stream(run_input, config=config, stream_mode=["updates", "messages"]):
                 if mode == "messages":
                     message_chunk, metadata = chunk
-                    if metadata.get("langgraph_node") == "agent" and getattr(message_chunk, "content", None):
-                        yield _sse("token", {"content": message_chunk.content})
+                    # .content may be a plain string or a list of content
+                    # blocks (e.g. {"type": "text", "text": "...", "index": 0})
+                    # depending on the model backend; .text normalizes either
+                    # shape to a string and is what the UI expects.
+                    if metadata.get("langgraph_node") == "agent" and message_chunk.text:
+                        yield _sse("token", {"content": message_chunk.text})
                 elif mode == "updates":
                     for node, update in chunk.items():
                         if node == "__interrupt__":
@@ -221,11 +251,13 @@ def _stream_run(session_id: str, run_input) -> "StreamingResponse":
 @app.post("/api/sessions/{session_id}/messages")
 def post_message(session_id: str, body: MessageBody):
     _require_session(session_id)
+    model_id = _resolve_model(body.model)
     run_input = {"messages": [{"role": "user", "content": body.content}]}
-    return _stream_run(session_id, run_input)
+    return _stream_run(session_id, run_input, model_id)
 
 
 @app.post("/api/sessions/{session_id}/approve")
 def post_approve(session_id: str, body: ApproveBody):
     _require_session(session_id)
-    return _stream_run(session_id, Command(resume=body.approved))
+    model_id = _resolve_model(body.model)
+    return _stream_run(session_id, Command(resume=body.approved), model_id)

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createSession, deleteSession, listSessions } from "./api";
+import { createSession, deleteSession, listModels, listSessions } from "./api";
 import ChatWindow from "./components/ChatWindow";
 import Sidebar from "./components/Sidebar";
-import type { Session } from "./types";
+import type { ModelInfo, Session } from "./types";
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const didInit = useRef(false);
 
   const refreshSessions = useCallback(async () => {
@@ -37,7 +39,10 @@ export default function App() {
 
     (async () => {
       try {
-        const list = await refreshSessions();
+        const [list, modelList] = await Promise.all([refreshSessions(), listModels()]);
+        setModels(modelList);
+        const firstAvailable = modelList.find((m) => m.available);
+        setSelectedModel(firstAvailable?.id ?? modelList[0]?.id ?? "");
         if (list.length > 0) {
           setActiveId(list[0].id);
         } else {
@@ -77,7 +82,14 @@ export default function App() {
         onDelete={handleDelete}
       />
       {activeId ? (
-        <ChatWindow key={activeId} sessionId={activeId} onActivity={refreshSessions} />
+        <ChatWindow
+          key={activeId}
+          sessionId={activeId}
+          onActivity={refreshSessions}
+          models={models}
+          selectedModel={selectedModel}
+          onSelectModel={setSelectedModel}
+        />
       ) : (
         <div className="flex flex-1 items-center justify-center text-neutral-500">Select or start a chat</div>
       )}

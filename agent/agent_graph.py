@@ -18,11 +18,12 @@ CLI (dev_agent.py) and the web backend (server.py) share one approval model.
 from pathlib import Path
 
 from langchain_core.messages import SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode
 
+from models import DEFAULT_MODEL_ID, build_llm
 from prompts import build_system_prompt
 from tools import get_tools
 
@@ -30,7 +31,7 @@ from tools import get_tools
 # Configuration
 # ---------------------------------------------------------------------------
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = DEFAULT_MODEL_ID
 
 
 def build_graph(project_dir: Path):
@@ -38,21 +39,30 @@ def build_graph(project_dir: Path):
     project_dir = Path(project_dir).resolve()
 
     tools = get_tools(project_dir)
+    system_prompt = build_system_prompt(project_dir)
 
     # -- the model, with tools bound to it -----------------------------------
     # bind_tools() attaches the tool schemas to every request, so the model
     # knows what it can call. create_react_agent did this for us before.
+    # Which model backs a given turn is chosen per-request (via config, keyed
+    # by thread_id like everything else) rather than fixed at graph-build
+    # time, so a conversation can switch models turn-by-turn. Bound llms are
+    # cached per model id since building/binding isn't free.
 
-    llm = ChatOllama(model=MODEL_NAME, temperature=0)
-    llm_with_tools = llm.bind_tools(tools)
+    llm_cache: dict[str, object] = {}
 
-    system_prompt = build_system_prompt(project_dir)
+    def get_bound_llm(model_id: str):
+        if model_id not in llm_cache:
+            llm_cache[model_id] = build_llm(model_id).bind_tools(tools)
+        return llm_cache[model_id]
 
     # -- NODE 1: call the model ----------------------------------------------
 
-    def call_model(state: MessagesState):
+    def call_model(state: MessagesState, config: RunnableConfig):
         """Send system prompt + full conversation to the model.
         Returns its response; MessagesState appends it automatically."""
+        model_id = config.get("configurable", {}).get("model_id", DEFAULT_MODEL_ID)
+        llm_with_tools = get_bound_llm(model_id)
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getMessages, streamApprove, streamMessage } from "../api";
 import { buildBlocks } from "../render";
-import type { ApprovalRequest, ChatMessage, LivePart, SSEEvent } from "../types";
+import type { ApprovalRequest, ChatMessage, LivePart, ModelInfo, SSEEvent } from "../types";
 import ApprovalCard from "./ApprovalCard";
 import ChatInput from "./ChatInput";
 import MessageBubble from "./MessageBubble";
@@ -10,9 +10,12 @@ import ToolCallChip from "./ToolCallChip";
 interface Props {
   sessionId: string;
   onActivity: () => void;
+  models: ModelInfo[];
+  selectedModel: string;
+  onSelectModel: (id: string) => void;
 }
 
-export default function ChatWindow({ sessionId, onActivity }: Props) {
+export default function ChatWindow({ sessionId, onActivity, models, selectedModel, onSelectModel }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [liveParts, setLiveParts] = useState<LivePart[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -98,7 +101,7 @@ export default function ChatWindow({ sessionId, onActivity }: Props) {
     setLiveParts([]);
     awaitingApproval.current = false;
     setIsStreaming(true);
-    streamMessage(sessionId, content, applyEvent)
+    streamMessage(sessionId, content, selectedModel, applyEvent)
       .then(afterStreamEnds)
       .catch((err) => {
         setLiveParts((prev) => [...prev, { type: "text", content: `⚠️ ${err.message}` }]);
@@ -119,7 +122,7 @@ export default function ChatWindow({ sessionId, onActivity }: Props) {
     });
     awaitingApproval.current = false;
     setIsStreaming(true);
-    streamApprove(sessionId, approved, applyEvent)
+    streamApprove(sessionId, approved, selectedModel, applyEvent)
       .then(afterStreamEnds)
       .catch((err) => {
         setLiveParts((prev) => [...prev, { type: "text", content: `⚠️ ${err.message}` }]);
@@ -135,6 +138,25 @@ export default function ChatWindow({ sessionId, onActivity }: Props) {
 
   return (
     <div className="flex flex-1 flex-col">
+      <div className="flex items-center justify-end border-b border-neutral-800 px-4 py-2">
+        <select
+          value={selectedModel}
+          onChange={(e) => onSelectModel(e.target.value)}
+          className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none"
+        >
+          {models.map((m) => (
+            <option
+              key={m.id}
+              value={m.id}
+              disabled={!m.available}
+              title={m.available ? undefined : "Not configured on the backend"}
+            >
+              {m.label}
+              {m.available ? "" : " (unavailable)"}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-2">
           {blocks.length === 0 && liveParts.length === 0 && (

@@ -1,9 +1,11 @@
 # 🐝 theBee
 
-A local, sandboxed AI coding agent — think "your own tiny Claude Code" — built
-from scratch on [LangGraph](https://www.langchain.com/langgraph) and running
-entirely on a **local LLM via [Ollama](https://ollama.com/)**. No API keys,
-no cloud calls for inference, no code leaving your machine.
+A sandboxed AI coding agent — think "your own tiny Claude Code" — built from
+scratch on [LangGraph](https://www.langchain.com/langgraph). The web UI's
+model picker lets you switch between several model backends (all with a free
+tier, plus Claude) at any point in a conversation; every backend is
+registered in one place (`agent/models.py`), so adding another is a small,
+localized change.
 
 It ships with two front ends that share the same brain:
 
@@ -14,13 +16,13 @@ It ships with two front ends that share the same brain:
 
 ## Goal
 
-Give a local LLM (running through Ollama) hands and eyes on a real project —
-the ability to read files, write/edit files, run shell commands, and search
-and browse the live web — while keeping a human in the loop for anything
-risky. The project is both a working dev-assistant tool and a learning
-reference for how to hand-roll an agent loop with LangGraph instead of using
-a prebuilt `create_react_agent`, and how to wire that same graph into both a
-CLI and a streaming web app.
+Give an LLM hands and eyes on a real project — the ability to read files,
+write/edit files, run shell commands, and search and browse the live web —
+while keeping a human in the loop for anything risky, regardless of which
+model backend is answering. The project is both a working dev-assistant tool
+and a learning reference for how to hand-roll an agent loop with LangGraph
+instead of using a prebuilt `create_react_agent`, and how to wire that same
+graph into both a CLI and a streaming web app.
 
 Design principles baked into the code:
 
@@ -54,9 +56,16 @@ Design principles baked into the code:
   `Command(resume=...)` for human-in-the-loop pauses
 - [LangChain Core](https://python.langchain.com/) — messages, `@tool`
   decorator, tool binding
-- [langchain-ollama](https://python.langchain.com/docs/integrations/chat/ollama/)
-  + [Ollama](https://ollama.com/) — runs the local model (`qwen3:8b` by
-  default)
+- Model backends, all registered in `agent/models.py` (pick any subset by
+  setting the matching API key — see Prerequisites):
+  [langchain-ollama](https://python.langchain.com/docs/integrations/chat/ollama/)
+  (against [Ollama Cloud](https://ollama.com/cloud), the default),
+  [langchain-google-genai](https://python.langchain.com/docs/integrations/chat/google_generative_ai/)
+  (Gemini), [langchain-groq](https://python.langchain.com/docs/integrations/chat/groq/),
+  [langchain-openai](https://python.langchain.com/docs/integrations/chat/openai/)
+  (pointed at [OpenRouter](https://openrouter.ai/)'s free models), and
+  [langchain-anthropic](https://python.langchain.com/docs/integrations/chat/anthropic/)
+  (Claude)
 - [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/)
   — HTTP API and Server-Sent Events (SSE) streaming to the UI
 - [Pydantic](https://docs.pydantic.dev/) — request body validation
@@ -104,13 +113,23 @@ theBee/
 
 - **Python** 3.11+
 - **Node.js** 18+ (with npm) — only needed for the web UI
-- **[Ollama](https://ollama.com/download)** installed and running locally
-- The model pulled once:
-  ```bash
-  ollama pull qwen3:8b
-  ```
-  (You can point at a different local model by changing `MODEL_NAME` in
-  `agent/agent_graph.py`.)
+- **At least one model API key.** Every entry in the model picker (they're
+  registered in `agent/models.py`) needs its own key — nothing works without
+  at least one set, since there's no bundled zero-signup model anymore. All
+  of these have a free tier:
+
+  | Model | Env var | Get a key |
+  |---|---|---|
+  | GPT-OSS 20B via **Ollama Cloud** (default) | `OLLAMA_API_KEY` | [ollama.com/settings/keys](https://ollama.com/settings/keys) |
+  | **Gemini** 3.5 Flash | `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+  | Llama 3.3 70B via **Groq** | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) |
+  | Llama 3.3 70B via **OpenRouter** (`:free`) | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
+  | **Claude** Sonnet 5 (paid, no free tier) | `ANTHROPIC_API_KEY` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+
+  Set whichever ones you want in the environment before starting the
+  backend, or copy `agent/.env.example` to `agent/.env` and fill it in there
+  (auto-loaded on startup, gitignored). Models without a key configured show
+  as unavailable (greyed out) in the picker instead of erroring.
 
 ## Setup
 
@@ -135,11 +154,9 @@ theBee/
    npm install
    ```
 
-4. **Make sure Ollama is running** with the model available
-   ```bash
-   ollama serve            # if it isn't already running as a service
-   ollama pull qwen3:8b    # one-time download, if not done above
-   ```
+4. **Set at least one model API key** — copy `agent/.env.example` to
+   `agent/.env` and fill in the key(s) for whichever model(s) you want to
+   use (see the table in Prerequisites).
 
 ## How to use
 
@@ -193,12 +210,21 @@ tool results stream in live. When the agent requests a file write or a
 risky command, an approval card appears in the chat — approve or deny it
 inline.
 
+A model picker sits above the chat — switch between any configured model
+(Ollama Cloud, Gemini, Groq, OpenRouter, Claude) at any point, even
+mid-thread; the next message you send is answered by whichever model is
+selected, with the full conversation history still shared between them.
+Models without an API key set show up disabled in the dropdown.
+
 ### Verifying the backend is up
 
 ```bash
 curl http://localhost:8000/api/health
+curl http://localhost:8000/api/models
 ```
-Returns `{"status": "ok", "project_dir": "...", "model": "qwen3:8b"}`.
+`/api/health` returns `{"status": "ok", "project_dir": "...", "model":
+"ollama-cloud-gpt-oss-20b"}`. `/api/models` lists every registered model
+with an `available` flag showing whether its API key is set.
 
 ## Available tools (what the agent can actually do)
 
@@ -226,12 +252,14 @@ directions:
   reflection steps, multi-turn self-critique) and seeing how each changes
   behavior.
 - **Dissect how the underlying models work.** Go beyond treating the LLM
-  as a black box: study how `qwen3:8b` (and other local models pulled via
-  Ollama) actually consumes the system prompt, message history, and tool
-  schemas — context window pressure, why models sometimes emit a tool call
-  as text instead of calling it, how temperature/quantization affect tool-
-  calling reliability, and how much of "agentic" behavior is really just
-  prompting discipline vs. model capability.
+  as a black box: study how each registered model (open-weight ones via
+  Ollama Cloud/Groq/OpenRouter, and Gemini/Claude) actually consumes the
+  system prompt, message history, and tool schemas — context window
+  pressure, why models sometimes emit a tool call as text instead of
+  calling it, how model size/quantization affect tool-calling reliability,
+  and how much of "agentic" behavior is really just prompting discipline
+  vs. model capability. The side-by-side picker makes this comparison easy
+  to run directly.
 - **Add MCP (Model Context Protocol) integration.** Right now every tool
   is a hand-written Python function in `tools/`. The next step is wiring
   in an [MCP](https://modelcontextprotocol.io/) client so the agent can
@@ -251,11 +279,14 @@ directions:
   project context survive restarts, and explore longer-term memory
   (e.g. a project knowledge base built up over many sessions, beyond the
   one-shot `AGENT.md`).
-- **Broader tool + model support.** Pluggable model backends beyond Ollama
-  (e.g. local GGUF runners, other providers) to compare how agent
-  reliability changes across models, plus more sandboxed tools (structured
-  diffs/patches instead of whole-file overwrites, test-runner-aware
-  feedback loops, git-aware operations).
+- **Broader tool + model support.** Ollama Cloud, Gemini, Groq, OpenRouter,
+  and Claude are all available side-by-side via the registry in
+  `agent/models.py` — useful for comparing how agent reliability (tool-call
+  correctness especially) changes across models and providers, at little
+  to no cost. Next up: locally-run GGUF models for a true zero-signup
+  option again, plus more sandboxed tools (structured diffs/patches instead
+  of whole-file overwrites, test-runner-aware feedback loops, git-aware
+  operations).
 - **Evaluation.** Some way to systematically test agent behavior across
   models/prompts/graph shapes (does it call tools when it should? does it
   correctly refuse unsafe commands? does it search when it should?) rather
@@ -263,9 +294,10 @@ directions:
 
 ## Notes & limits
 
-- Everything runs locally except the `web_search`/`browse_page`/`compare_pages`
-  tools, which make outbound network requests to DuckDuckGo and whatever
-  pages are fetched.
+- Every model backend is now a cloud API call (Ollama Cloud included) — the
+  earlier "nothing leaves the machine" local-only setup has been replaced by
+  the multi-provider picker above. Sandboxing of file/command tools to the
+  target project directory is unaffected either way.
 - Shell commands time out after 60 seconds; file reads/command output are
   truncated (20k / 8k characters respectively) to keep context manageable.
 - Conversation history and pending approvals live in memory
