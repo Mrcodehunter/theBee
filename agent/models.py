@@ -73,6 +73,20 @@ def list_models() -> list[dict]:
     return [{**m, "available": is_available(m["id"])} for m in AVAILABLE_MODELS]
 
 
+# Of the registered models, only these actually accept image input — Groq's
+# llama-3.3-70b-versatile, OpenRouter's free Llama, and Ollama Cloud's
+# gpt-oss:20b-cloud are all text-only. Tools that need vision (see
+# tools/image_tools.py) use this instead of whatever model the user
+# happens to be chatting with, so image analysis works regardless of the
+# active conversation model.
+VISION_CAPABLE_MODELS = ["claude-sonnet-5", "gemini-3-5-flash"]
+
+
+def get_vision_model_id() -> str | None:
+    """First vision-capable model that's actually configured, or None."""
+    return next((m for m in VISION_CAPABLE_MODELS if is_available(m)), None)
+
+
 def build_llm(model_id: str):
     """Construct the raw (un-bound) chat model for a given model id."""
     info = get_model_info(model_id)

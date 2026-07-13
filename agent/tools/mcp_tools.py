@@ -13,12 +13,29 @@ no changes needed there.
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.types import interrupt
 
 MCP_CONFIG_PATH = Path(__file__).resolve().parent.parent / "mcp_servers.json"
+
+
+def _run_async(coro):
+    """Run an async coroutine from sync code, safely whether or not the
+    current thread already has a running event loop. `asyncio.run()` alone
+    would raise "cannot be called from a running event loop" in that case —
+    e.g. `uvicorn --reload` imports the app (and thus calls build_graph() /
+    load_mcp_tools()) from inside its own already-running loop, unlike the
+    non-reload path. When a loop is already running here, fall back to a
+    dedicated thread with its own fresh loop instead of nesting."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _load_config() -> dict:
@@ -47,7 +64,7 @@ def _wrap_with_approval(mcp_tool: BaseTool, server_name: str, trusted: bool) -> 
             })
             if not approved:
                 return "DENIED: the human rejected this tool call."
-        return asyncio.run(mcp_tool.ainvoke(kwargs))
+        return _run_async(mcp_tool.ainvoke(kwargs))
 
     return StructuredTool.from_function(
         func=call,
@@ -91,5 +108,5 @@ def load_mcp_tools(project_dir: Path) -> list:
             pairs.extend((t, name) for t in tools)
         return pairs
 
-    discovered = asyncio.run(_discover())
+    discovered = _run_async(_discover())
     return [_wrap_with_approval(tool, name, trust[name]) for tool, name in discovered]

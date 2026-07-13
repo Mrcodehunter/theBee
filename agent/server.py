@@ -10,6 +10,7 @@ Endpoints:
     GET    /api/sessions/{id}/messages       full message history (+ pending approval, if any)
     POST   /api/sessions/{id}/messages       send a user message -> SSE stream of agent events
     POST   /api/sessions/{id}/approve        answer a pending approval -> SSE stream of agent events
+    POST   /api/sessions/{id}/upload         save an image into the sandbox, returns its path
 
 One graph instance is built at startup for PROJECT_DIR; each chat session is
 just a distinct `thread_id` into that graph's checkpointer, so conversation
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -39,8 +40,10 @@ load_dotenv()  # load agent/.env, if present, before reading any env vars below
 
 from agent_graph import build_graph, MODEL_NAME
 from models import DEFAULT_MODEL_ID, is_available, list_models
+from tools.image_tools import SUPPORTED_IMAGE_TYPES
 
 MAX_ITERATIONS = 15
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # ---------------------------------------------------------------------------
 # Project sandbox + graph (built once, shared by every session)
@@ -190,6 +193,34 @@ def get_messages(session_id: str):
         "messages": _serialize_messages(messages),
         "pending_interrupt": _pending_interrupt(session_id),
     }
+
+
+@app.post("/api/sessions/{session_id}/upload")
+async def upload_image(session_id: str, file: UploadFile):
+    """Save an uploaded image into the sandboxed project directory and
+    return its relative path, in the same form analyze_image expects. This
+    is a direct human action (the user deliberately attaching a file), not
+    an agent tool call, so it doesn't go through the approval gate agent-
+    initiated actions do."""
+    _require_session(session_id)
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported image type '{suffix}'. Supported: {', '.join(SUPPORTED_IMAGE_TYPES)}",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail=f"Image exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
+
+    uploads_dir = PROJECT_DIR / "uploads"
+    uploads_dir.mkdir(exist_ok=True)
+    name = f"{uuid.uuid4().hex}{suffix}"
+    (uploads_dir / name).write_bytes(data)
+
+    return {"path": f"uploads/{name}"}
 
 
 # ---------------------------------------------------------------------------
